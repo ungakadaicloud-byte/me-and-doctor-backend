@@ -1,33 +1,84 @@
-const jwt = require('jsonwebtoken');
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 
-/**
- * Express middleware: verifies the bearer token and attaches
- * `req.claims` for downstream RLS-scoped Supabase calls.
- *
- * Since login moved from a custom MSG91-verified session to Supabase's
- * own Auth (magic link email), the tokens arriving here are minted by
- * Supabase itself — not by this backend. They're still signed with the
- * same SUPABASE_JWT_SECRET, so verification here is unchanged; only
- * the claims shape differs (native Supabase claims: sub/email/role,
- * no custom clinic_id — that's now resolved server-side via the
- * `current_clinic_id()` Postgres function, see withClinicAuth).
- */
-function requireSession(req, res, next) {
-  const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+const authRoutes = require('./routes/auth');
+const clinicRoutes = require('./routes/clinic');
+const patientRoutes = require('./routes/patients');
+const visitRoutes = require('./routes/visits');
+const prescriptionRoutes = require('./routes/prescriptions');
+const queueRoutes = require('./routes/queue');
+const billingRoutes = require('./routes/billing');
+const reminderRoutes = require('./routes/reminders');
+const dashboardRoutes = require('./routes/dashboard');
+const reportsRoutes = require('./routes/reports');
+const referralRoutes = require('./routes/referral');
+const webhookRoutes = require('./routes/webhooks');
+const { startReminderCron } = require('./cron/reminders');
 
-  if (!token) {
-    return res.status(401).json({ error: 'missing_token' });
-  }
+const app = express();
 
-  try {
-    const decoded = jwt.verify(token, process.env.SUPABASE_JWT_SECRET);
-    req.claims = decoded;
-    req.userToken = token;
-    next();
-  } catch (err) {
-    return res.status(401).json({ error: 'invalid_token' });
-  }
-}
+// Razorpay webhook needs the raw body for signature verification,
+// so it's mounted BEFORE the json() body parser.
+app.use('/api/webhooks', express.raw({ type: 'application/json' }), webhookRoutes);
 
-module.exports = { requireSession };
+// CORS: restricted to the configured frontend origin(s) rather than
+// the previous wide-open cors() with no options. FRONTEND_URL supports
+// a comma-separated list (e.g. production + a Vercel preview URL).
+// Falls back to allow-all only outside production, for local dev.
+const allowedOrigins = (process.env.FRONTEND_URL || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (process.env.NODE_ENV !== 'production') return callback(null, true);
+    if (!origin) return callback(null, true); // server-to-server / curl / webhooks
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('Not allowed by CORS'));
+  },
+}));
+
+app.use(express.json());
+
+// Rate limiting: a strict limiter on auth endpoints (OTP send/verify
+// and onboarding are the most abuse-prone — SMS-bombing, brute force),
+// and a looser general limiter on everything else under /api.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'too_many_requests' },
+});
+
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'too_many_requests' },
+});
+
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
+
+app.use('/api/auth', authLimiter, authRoutes);
+app.use('/api', apiLimiter);
+app.use('/api/clinic', clinicRoutes);
+app.use('/api/patients', patientRoutes);
+app.use('/api/visits', visitRoutes);
+app.use('/api/prescriptions', prescriptionRoutes);
+app.use('/api/queue', queueRoutes);
+app.use('/api/billing', billingRoutes);
+app.use('/api/reminders', reminderRoutes);
+app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/reports', reportsRoutes);
+app.use('/api/referral', referralRoutes);
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Me & Doctor backend listening on port ${PORT}`);
+  startReminderCron();
+});

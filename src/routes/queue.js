@@ -55,14 +55,30 @@ router.post('/token', async (req, res) => {
 });
 
 router.patch('/token/:id', async (req, res) => {
-  const { status } = req.body;
-  if (!['waiting', 'in_consultation', 'completed', 'cancelled'].includes(status)) {
-    return res.status(400).json({ error: 'invalid_status' });
+  const { status, vitals } = req.body;
+  const updates = {};
+
+  if (status !== undefined) {
+    if (!['waiting', 'in_consultation', 'completed', 'cancelled'].includes(status)) {
+      return res.status(400).json({ error: 'invalid_status' });
+    }
+    updates.status = status;
+  }
+
+  // Lets an assistant/nurse record BP/Sugar/Weight while the patient is
+  // still waiting — independent of status changes, since the same
+  // request may only be updating vitals (not moving the queue state).
+  if (vitals !== undefined) {
+    updates.vitals = vitals;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'nothing_to_update' });
   }
 
   const { data, error } = await req.supabase
     .from('queue_tokens')
-    .update({ status })
+    .update(updates)
     .eq('id', req.params.id)
     .eq('clinic_id', req.clinicId)
     .select()

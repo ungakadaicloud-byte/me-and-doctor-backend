@@ -27,16 +27,27 @@ app.use('/api/webhooks', express.raw({ type: 'application/json' }), webhookRoute
 // the previous wide-open cors() with no options. FRONTEND_URL supports
 // a comma-separated list (e.g. production + a Vercel preview URL).
 // Falls back to allow-all only outside production, for local dev.
+//
+// The .replace() calls guard against a stray copy-paste issue (extra
+// quote characters or a trailing slash ending up inside the env var's
+// value itself, rather than just around it) — either of those would
+// make an otherwise-correct-looking value never match.
 const allowedOrigins = (process.env.FRONTEND_URL || '')
   .split(',')
-  .map((o) => o.trim())
+  .map((o) => o.trim().replace(/^["']|["']$/g, '').replace(/\/+$/, ''))
   .filter(Boolean);
+
+console.log('CORS configured allowedOrigins:', JSON.stringify(allowedOrigins));
 
 app.use(cors({
   origin: (origin, callback) => {
     if (process.env.NODE_ENV !== 'production') return callback(null, true);
     if (!origin) return callback(null, true); // server-to-server / curl / webhooks
     if (allowedOrigins.includes(origin)) return callback(null, true);
+    // Logs the exact received Origin next to what's configured, so a
+    // future mismatch shows up immediately in Railway's logs instead
+    // of requiring a guess-and-check cycle.
+    console.error('CORS rejected. Received origin:', JSON.stringify(origin), 'Allowed:', JSON.stringify(allowedOrigins));
     return callback(new Error('Not allowed by CORS'));
   },
 }));

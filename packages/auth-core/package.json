@@ -1,9 +1,9 @@
 {
   "name": "@me-and/auth-core",
-  "version": "2.0.0",
-  "description": "Session JWT verification, shared across Me & products. Session issuance itself now lives in Supabase Auth (magic link email) rather than being minted by this package.",
+  "version": "3.0.0",
+  "description": "Session validation, shared across Me & products. Validates Supabase-issued access tokens via the Auth API rather than local signature verification, so it works with both symmetric and asymmetric token signing.",
   "main": "src/index.js",
   "dependencies": {
-    "jsonwebtoken": "^9.0.2"
+    "@supabase/supabase-js": "^2.45.0"
   }
 }

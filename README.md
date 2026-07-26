@@ -58,3 +58,5 @@ src/middleware/auth.js (withClinicAuth) — resolves clinic_id with one extra RL
 src/routes/auth.js — now only POST /api/auth/onboard (creates clinics + doctors, linked to the session's auth_user_id). All MSG91-specific code, the legacy send-otp/verify-otp routes, verify-widget-token, and dev-login are gone.
 Migration 005_supabase_email_auth.sql — adds doctors.auth_user_id, makes doctors.phone optional, and replaces every table's RLS policy with a current_clinic_id() helper function instead of a custom JWT claim.
 MSG91_AUTH_KEY removed from .env.example — nothing in this backend calls MSG91 anymore. (Wati, a separate WhatsApp service, is unaffected and still used for reminders/prescription sharing.)
+
+

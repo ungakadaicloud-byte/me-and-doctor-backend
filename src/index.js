@@ -19,6 +19,14 @@ const { startReminderCron } = require('./cron/reminders');
 
 const app = express();
 
+// Railway (and now the custom domain's extra proxy hop) sits in front
+// of this app and sets X-Forwarded-For. Without telling Express to
+// trust that proxy, express-rate-limit refuses to trust the header on
+// security grounds and throws on every single request — which is what
+// started happening once traffic began arriving via the custom domain
+// instead of only the *.vercel.app / *.up.railway.app defaults.
+app.set('trust proxy', 1);
+
 // Razorpay webhook needs the raw body for signature verification,
 // so it's mounted BEFORE the json() body parser.
 app.use('/api/webhooks', express.raw({ type: 'application/json' }), webhookRoutes);

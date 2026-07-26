@@ -70,6 +70,10 @@ router.post('/', async (req, res) => {
 
 router.patch('/:id', async (req, res) => {
   const fields = pick(req.body, PATIENT_FIELDS);
+  if (Object.keys(fields).length === 0) {
+    return res.status(400).json({ error: 'nothing_to_update' });
+  }
+  fields.updated_at = new Date().toISOString();
 
   const { data, error } = await req.supabase
     .from('patients')

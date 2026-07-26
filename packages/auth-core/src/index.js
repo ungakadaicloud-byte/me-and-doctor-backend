@@ -1,18 +1,22 @@
-const jwt = require('jsonwebtoken');
+const { createClient } = require('@supabase/supabase-js');
 
-/**
- * Express middleware: verifies the bearer token and attaches
- * `req.claims` for downstream RLS-scoped Supabase calls.
- *
- * Since login moved from a custom MSG91-verified session to Supabase's
- * own Auth (magic link email), the tokens arriving here are minted by
- * Supabase itself — not by this backend. They're still signed with the
- * same SUPABASE_JWT_SECRET, so verification here is unchanged; only
- * the claims shape differs (native Supabase claims: sub/email/role,
- * no custom clinic_id — that's now resolved server-side via the
- * `current_clinic_id()` Postgres function, see withClinicAuth).
- */
-function requireSession(req, res, next) {
+// Validates tokens by asking Supabase who they belong to, rather than
+// verifying the signature locally with a shared secret.
+//
+// The previous implementation did jwt.verify(token, SUPABASE_JWT_SECRET),
+// which assumes Supabase signs with a symmetric HS256 secret. Projects
+// on Supabase's newer API-key system (anon keys that look like
+// `sb_publishable_...`) sign access tokens asymmetrically instead, so
+// that verification fails for *every* request — the backend returns 401
+// on all authenticated calls even though the session is perfectly valid.
+// getUser() works regardless of the signing algorithm in use.
+const adminClient = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY,
+  { auth: { autoRefreshToken: false, persistSession: false } }
+);
+
+async function requireSession(req, res, next) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
 
@@ -21,11 +25,19 @@ function requireSession(req, res, next) {
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.SUPABASE_JWT_SECRET);
-    req.claims = decoded;
+    const { data, error } = await adminClient.auth.getUser(token);
+
+    if (error || !data?.user) {
+      return res.status(401).json({ error: 'invalid_token' });
+    }
+
+    // Keeps the same shape downstream code already expects: claims.sub
+    // is the auth user id used to resolve the doctor's clinic.
+    req.claims = { sub: data.user.id, email: data.user.email, role: data.user.role };
     req.userToken = token;
     next();
   } catch (err) {
+    console.error('Token validation failed:', err.message);
     return res.status(401).json({ error: 'invalid_token' });
   }
 }

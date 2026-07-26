@@ -57,14 +57,49 @@ router.post('/', async (req, res) => {
 });
 
 router.patch('/:id', async (req, res) => {
-  const { payment_status, payment_mode } = req.body;
+  const { payment_status, payment_mode, consultation_fee, other_charges, discount } = req.body;
   if (payment_status && !['pending', 'paid'].includes(payment_status)) {
     return res.status(400).json({ error: 'invalid_payment_status' });
   }
 
+  const updates = {};
+  if (payment_status !== undefined) updates.payment_status = payment_status;
+  if (payment_mode !== undefined) updates.payment_mode = payment_mode;
+
+  // Correcting the fee breakdown recomputes the total the same way
+  // creating a bill does — a doctor fixing a wrongly-entered discount
+  // shouldn't have to delete and recreate the whole invoice.
+  const editingAmount = consultation_fee !== undefined || other_charges !== undefined || discount !== undefined;
+  if (editingAmount) {
+    if (consultation_fee !== undefined) updates.consultation_fee = consultation_fee;
+    if (other_charges !== undefined) updates.other_charges = other_charges;
+    if (discount !== undefined) updates.discount = discount;
+
+    const { data: existing, error: fetchError } = await req.supabase
+      .from('visit_billing')
+      .select('consultation_fee, other_charges, discount')
+      .eq('id', req.params.id)
+      .eq('clinic_id', req.clinicId)
+      .maybeSingle();
+    if (fetchError) return res.status(500).json({ error: fetchError.message });
+    if (!existing) return res.status(404).json({ error: 'not_found' });
+
+    const fee = Number(consultation_fee ?? existing.consultation_fee ?? 0);
+    const other = Number(other_charges ?? existing.other_charges ?? 0);
+    const disc = Number(discount ?? existing.discount ?? 0);
+    const total = fee + other - disc;
+    if (Number.isNaN(total) || total < 0) return res.status(400).json({ error: 'invalid_amount' });
+    updates.amount = total;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'nothing_to_update' });
+  }
+  updates.updated_at = new Date().toISOString();
+
   const { data, error } = await req.supabase
     .from('visit_billing')
-    .update({ payment_status, payment_mode })
+    .update(updates)
     .eq('id', req.params.id)
     .eq('clinic_id', req.clinicId)
     .select()

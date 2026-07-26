@@ -5,7 +5,7 @@ const router = express.Router();
 router.use(withClinicAuth);
 
 router.post('/', async (req, res) => {
-  const { patient_id, chief_complaint, soap_notes, diagnosis, vitals, follow_up_date, status } = req.body;
+  const { patient_id, chief_complaint, soap_notes, diagnosis, lab_tests, vitals, follow_up_date, status } = req.body;
   if (!patient_id) return res.status(400).json({ error: 'patient_id_required' });
 
   const { data, error } = await req.supabase
@@ -17,6 +17,7 @@ router.post('/', async (req, res) => {
       chief_complaint: chief_complaint || null,
       soap_notes: soap_notes || null,
       diagnosis: diagnosis || null,
+      lab_tests: lab_tests || null,
       vitals: vitals || {},
       follow_up_date: follow_up_date || null,
       status: status || 'completed',
@@ -41,21 +42,36 @@ router.post('/', async (req, res) => {
   res.status(201).json(data);
 });
 
+const EDITABLE_VISIT_FIELDS = ['chief_complaint', 'soap_notes', 'diagnosis', 'lab_tests', 'vitals', 'follow_up_date', 'status'];
+
 router.patch('/:id', async (req, res) => {
-  const { status } = req.body;
-  if (!['completed', 'cancelled'].includes(status)) {
+  const updates = {};
+  for (const field of EDITABLE_VISIT_FIELDS) {
+    if (req.body[field] !== undefined) updates[field] = req.body[field];
+  }
+
+  if (updates.status && !['completed', 'cancelled'].includes(updates.status)) {
     return res.status(400).json({ error: 'invalid_status' });
   }
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'nothing_to_update' });
+  }
+
+  // Lets a doctor correct a typo'd diagnosis or a wrong vitals reading
+  // after the visit is saved — previously only the status could be
+  // changed, so any mistake in the actual clinical notes was permanent.
+  updates.updated_at = new Date().toISOString();
 
   const { data, error } = await req.supabase
     .from('visits')
-    .update({ status })
+    .update(updates)
     .eq('id', req.params.id)
     .eq('clinic_id', req.clinicId)
     .select()
     .maybeSingle();
 
   if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: 'not_found' });
   res.json(data);
 });
 

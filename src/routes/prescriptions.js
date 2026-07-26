@@ -28,6 +28,35 @@ router.post('/', async (req, res) => {
   res.status(201).json(data);
 });
 
+// Corrects a saved prescription — a typo'd dosage or wrong medicine
+// name shouldn't be permanent just because "Save" was already clicked.
+router.patch('/:id', async (req, res) => {
+  const { medicines, advice } = req.body;
+  const updates = {};
+  if (medicines !== undefined) {
+    if (!Array.isArray(medicines)) return res.status(400).json({ error: 'medicines_must_be_array' });
+    updates.medicines = medicines;
+  }
+  if (advice !== undefined) updates.advice = advice;
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'nothing_to_update' });
+  }
+  updates.updated_at = new Date().toISOString();
+
+  const { data, error } = await req.supabase
+    .from('prescriptions')
+    .update(updates)
+    .eq('id', req.params.id)
+    .eq('clinic_id', req.clinicId)
+    .select()
+    .maybeSingle();
+
+  if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: 'not_found' });
+  res.json(data);
+});
+
 // Powers the "1-click repeat last prescription" MVP hook
 router.get('/last', async (req, res) => {
   const { patient_id } = req.query;
